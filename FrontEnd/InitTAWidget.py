@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import resources
 from functools import partial
@@ -12,8 +13,9 @@ from FrontEnd.ClockWidget import ClockWidget
 from FrontEnd.CountSetDialog import CountSetDialog
 from FrontEnd.CopyRight import CopyRight
 from FrontEnd.StatisticsWidget import StatisticsWidget
+from FrontEnd.WebBlockDialog import WebBlockDialog
 from Log.my_logger import LoggerHandler
-from PyQt5.QtCore import (QTimer, QSettings, QPoint, QVariant, pyqtSignal, Qt, QSize)
+from PyQt5.QtCore import (QTimer, QSettings, QPoint, QVariant, pyqtSignal, Qt, QSize, QSharedMemory)
 from PyQt5.QtWidgets import QMainWindow, QDesktopWidget, QMessageBox, QSystemTrayIcon, QMenu, QAction, QInputDialog, \
     QWidget, QListWidgetItem
 from PyQt5.QtSql import QSqlDatabase, QSqlQuery, QSqlQueryModel
@@ -69,6 +71,7 @@ class LogWidget(QWidget, Ui_LogWidget):
 
 class InitTAWidget(Ui_InitTAWidget, QMainWindow):
 
+    web_block_dialog = None
     statistics_widget = None
     copy_right = None
     clock_widget = None
@@ -88,6 +91,7 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
 
     # 自定义信号
     count_down_terminate_signal = pyqtSignal()
+    showMainWindowSignal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -106,7 +110,9 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
         self.setFixedSize(self.size())
         self.setWindowIcon(QIcon(':/icon/icon.png'))
 
-        # 1.向工具栏添加按钮用于模式切换
+        self.showMainWindowSignal.connect(self.showMainWindow)
+
+        # 向工具栏添加按钮用于模式切换
         self.action_mode = QAction()
         if self.mode == WORKING:
             self.action_mode.setIcon(QIcon(':/icon/work.png'))
@@ -114,8 +120,11 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
             self.action_data_analysis.setIcon(QIcon(':/icon/relaxing.png'))
         self.action_data_analysis = QAction()
         self.action_data_analysis.setIcon(QIcon(':/icon/statistics.png'))
+        self.action_domain_block = QAction()
+        self.action_domain_block.setIcon(QIcon(':/icon/web.png'))
         self.toolBar.addAction(self.action_mode)
         self.toolBar.addAction(self.action_data_analysis)
+        self.toolBar.addAction(self.action_domain_block)
         self.toolBar.setContextMenuPolicy(Qt.PreventContextMenu)
         self.btn_stop_timing.setDisabled(True)
         self.btn_start_timing.setDisabled(False)
@@ -130,7 +139,14 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
         self.btn_rm_task.clicked.connect(self.btn_rm_task_clicked)
         self.action_mode.triggered.connect(self.btn_mode_clicked)
         self.action_data_analysis.triggered.connect(self.btn_data_analysis_clicked)
+        self.action_domain_block.triggered.connect(self.btn_domain_block_clicked)
         self.count_down_terminate_signal.connect(self.count_down_terminate_signal_triggered)
+
+    def showMainWindow(self):
+        # 在这里编写弹出主窗口的代码
+        self.showNormal()
+        if self.clock_widget is not None:
+            self.clock_widget.hide()
 
     def _init_settings(self):
         self.setting_manager = QSettings('ShawWalt', 'TimeArranger')
@@ -165,7 +181,6 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
         self.logger.debug('关闭数据库访问')
 
     def _init_DB(self):
-        # todo 一系列的根据数据库初始话控件的操作
         # 开启数据库，确定连接已建立
         self._open_DB()
         if self.conn is None:
@@ -215,12 +230,29 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
                 self.logger.error('用户数据库建立失败: %s' % query.lastError().text())
                 sys.exit(1)
 
-            # 删除异常退出留下的垃圾数据
-            query.prepare("DELETE FROM BasicUserData WHERE IS_INTERRUPTED = (:is_interrupted)")
-            query.bindValue(':is_interrupted', UNKNOWN)
+        if 'WebBlockList' not in tables:
+            query.prepare('''
+                            CREATE TABLE WebBlockList(
+                                WEB_DOMAIN text PRIMARY KEY UNIQUE, 
+                                RELAXING_OR_WORKING text DEFAULT 'WORKING'
+                            );
+                        ''')
             if not query.exec():
-                self.logger.error('删除数据异常')
+                self.logger.error('WebBlockList建表错误')
                 sys.exit(1)
+
+        # 删除异常退出留下的垃圾数据
+        query.prepare("DELETE FROM BasicUserData WHERE IS_INTERRUPTED = (:is_interrupted);")
+        query.bindValue(':is_interrupted', UNKNOWN)
+        if not query.exec():
+            self.logger.error('删除数据异常1')
+            sys.exit(1)
+
+        query.prepare("DELETE FROM BasicUserData WHERE DURATION < (:value);")
+        query.bindValue(':value', 0)
+        if not query.exec():
+            self.logger.error('删除数据异常2')
+            sys.exit(1)
 
     def _switch_widget_with_mode(self):
         if self.mode == WORKING:
@@ -237,9 +269,12 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
             self.listView.setEnabled(False)
 
     def btn_data_analysis_clicked(self):
-        # todo 数据分析功能的具体实现
         self.statistics_widget = StatisticsWidget()
         self.statistics_widget.show()
+
+    def btn_domain_block_clicked(self):
+        self.web_block_dialog = WebBlockDialog(self.is_timing)
+        self.web_block_dialog.show()
 
     def _tray_icon_init(self):
         self.ti = TrayIcon(self)
@@ -343,7 +378,7 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
 
         if ret == QMessageBox.Ok:
             self.timer.stop()
-
+            self.action_mode.setEnabled(True)
             self.is_timing = False
             self.btn_stop_timing.setDisabled(True)
             self.btn_start_timing.setDisabled(False)
@@ -354,6 +389,7 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
             self.lcdNumber.display('00:00:00')
             self.clock_widget.label.setText('工作时间剩余00:00:00')
             self.clock_widget.close()
+            self.domain_block_close()
 
         # 用户数据录入
         global YES, NO, UNKNOWN
@@ -382,6 +418,9 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
     def count_down_set_signal_triggered(self):
         # 从注册表加载计时时间
         # 加载计时时间
+        # 开启域名屏蔽
+        self.domain_block_trigger()
+        self.action_mode.setDisabled(True)
         self.duration = self.setting_manager.value('MainWindow/WorkingPeriod', 300)
         self.duration = int(self.duration)  # 切记注册表存的是字符串，要转回原类型
         h, m, s = self._int2time(self.duration)
@@ -407,10 +446,13 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
         self.is_timing = True
         self.timer.start(1000)
 
+
     def count_down_terminate_signal_triggered(self):
         # 录入用户数据到BasicUserData
         global UNKNOWN, YES, NO
 
+        self.domain_block_close()
+        self.action_mode.setEnabled(True)
         # 检查数据库连接状态
         if self.conn is None:
             self.logger.error('数据库连接丢失')
@@ -660,7 +702,7 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
             if data_list:
                 for line in data_list:
                     str_list = line.split(' ')
-                    w = LogWidget(str_list[0] +' '+ str_list[1], str_list[3], str_list[2])
+                    w = LogWidget(str_list[0] + ' ' + str_list[1], str_list[3], str_list[2])
                     item = QListWidgetItem()
                     item.setSizeHint(QSize(200, 80))
                     self.listWidget_log.addItem(item)
@@ -687,6 +729,7 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
                     self.logger.info('在工作时中途放弃,要养成自律的好习惯!!!')
                 else:
                     self.logger.info('工作很重要,但也要注意眼睛和身体!!!')
+                self.domain_block_close()
 
                 # 录入数据库
                 query = QSqlQuery()
@@ -713,7 +756,76 @@ class InitTAWidget(Ui_InitTAWidget, QMainWindow):
                 self.clock_widget.save_settings()
                 self._save_settings()
                 self.logger.info('TimeArranger正常退出')
+                self.domain_block_close()
                 sys.exit(0)
+
+    def domain_block_close(self):
+        with open(HOSTS_PATH, 'r', encoding='utf-8') as f_r:
+            data = f_r.readlines()
+            start_pattern = '# TimeArranger dev via Python 3.8.3\n'
+            end_pattern = '# end of TimeArranger dev via Python 3.8.3\n'
+            start_index = -1
+            end_index = -1
+            for i, line in enumerate(data):
+                if data[i] == start_pattern:
+                    start_index = i
+                if data[i] == end_pattern:
+                    end_index = i
+                    break
+            del data[start_index + 1:end_index]
+            with open(HOSTS_PATH, 'w', encoding='utf-8') as f_w:
+                f_w.writelines(data)
+            subprocess.Popen('ipconfig /flushdns', shell=True)
+
+    def domain_block_trigger(self):
+        if self.conn == None:
+            self.logger.error('数据库连接丢失')
+            sys.exit(1)
+
+        with open(HOSTS_PATH, 'r', encoding='utf-8') as f_r:
+            data = f_r.readlines()
+            start_pattern = '# TimeArranger dev via Python 3.8.3\n'
+            end_pattern = '# end of TimeArranger dev via Python 3.8.3\n'
+            start_index = -1
+            end_index = -1
+            for i, line in enumerate(data):
+                if data[i] == start_pattern:
+                    start_index = i
+                if data[i] == end_pattern:
+                    end_index = i
+                    break
+
+            query = QSqlQuery(self.conn)
+            query.prepare('''SELECT * FROM WebBlockList WHERE RELAXING_OR_WORKING = :r_or_w''')
+            if self.mode == WORKING:
+                query.bindValue(':r_or_w', 'WORKING')
+            else:
+                query.bindValue(':r_or_w', 'RELAXING')
+
+            with open(HOSTS_PATH, 'w', encoding='utf-8') as f_w:
+                redirect_ip = '0.0.0.0'
+                if start_index < 0:
+                    start_index = len(data)
+                    if not query.exec():
+                        self.logger.error('Select失败')
+                        sys.exit(1)
+                    data.insert(start_index, start_pattern)
+                    while query.next():
+                        start_index += 1
+                        item = redirect_ip + ' ' + query.value('WEB_DOMAIN') + '\n'
+                        data.insert(start_index, item)
+                    data.insert(start_index + 1, end_pattern)
+                else:
+                    del data[start_index + 1:end_index]
+                    if not query.exec():
+                        self.logger.error('Select失败')
+                        sys.exit(1)
+                    while query.next():
+                        start_index += 1
+                        item = redirect_ip + ' ' + query.value('WEB_DOMAIN') + '\n'
+                        data.insert(start_index, item)
+                f_w.writelines(data)
+            subprocess.Popen('ipconfig /flushdns', shell=True)
 
     def closeEvent(self, event):
         event.ignore()

@@ -1,6 +1,6 @@
 import sys
 
-from PyQt5.QtCore import QSize, QDate, Qt
+from PyQt5.QtCore import QSize, QDate, Qt, pyqtSlot
 from PyQt5.QtGui import QPainter, QIcon
 
 from UI.UI_StatisticsWidget import Ui_StatisticsWidget
@@ -12,15 +12,16 @@ from Log.my_logger import LoggerHandler
 from resources import *
 
 class StatisticsWidget(Ui_StatisticsWidget, QWidget):
+
+    date_begin = None
+    date_end = None
+
     def __init__(self):
         super().__init__()
         self.setupUi(self)
         self._init_ui()
         self._init_DB()
         self._data_plot()
-
-    date_begin = None
-    date_end = None
 
     def _init_ui(self):
         self.setWindowIcon(QIcon(':/icon/icon.png'))
@@ -41,28 +42,30 @@ class StatisticsWidget(Ui_StatisticsWidget, QWidget):
         self.GraphicLayout.addWidget(self.chart_view)
 
         self.comboBox_view_mode.currentIndexChanged.connect(self._data_plot)
-        self.dateEdit_begin.dateChanged.connect(self.date_changed)
-        self.dateEdit_end.dateChanged.connect(self.date_changed)
+        self.dateEdit_begin.calendarWidget().clicked.connect(self.date_changed)
+        self.dateEdit_end.calendarWidget().clicked.connect(self.date_changed)
 
     def date_changed(self):
-        # 为了防止程序出发信号，打开两次弹窗
-        self.dateEdit_begin.dateChanged.disconnect(self.date_changed)
+        # 为了防止程序触发信号，打开两次弹窗
+        self.dateEdit_begin.calendarWidget().clicked.disconnect(self.date_changed)
+        self.dateEdit_end.calendarWidget().clicked.disconnect(self.date_changed)
 
         date_format = self.dateEdit_begin.displayFormat()
-        compare_result = self.dateEdit_begin.date().toString(date_format) > self.dateEdit_end.date().toString(date_format)
+        date_begin = self.dateEdit_begin.date()
+        date_end = self.dateEdit_end.date()
+        compare_result = date_begin.toString(date_format) > date_end.toString(date_format)
 
         if compare_result:
-            QMessageBox.warning(self, '统计的开始时间必须大于或等于结束时间', '请重新设置时间值')
             self.dateEdit_begin.setDate(self.date_begin)
             self.dateEdit_end.setDate(self.date_end)
-            self.dateEdit_begin.dateChanged.connect(self.date_changed)
-            return
+            QMessageBox.warning(self, '统计的开始时间必须大于或等于结束时间', '请重新设置时间值')
+        else:
+            self.date_begin = self.dateEdit_begin.date()
+            self.date_end = self.dateEdit_end.date()
+            self._data_plot()
 
-        self.date_begin = self.dateEdit_begin.date()
-        self.date_end = self.dateEdit_end.date()
-        self.dateEdit_begin.dateChanged.connect(self.date_changed)
-
-        self._data_plot()
+        self.dateEdit_begin.calendarWidget().clicked.connect(self.date_changed)
+        self.dateEdit_end.calendarWidget().clicked.connect(self.date_changed)
 
     def _logger_init(self):
         # 初始化日志器参数
@@ -84,7 +87,6 @@ class StatisticsWidget(Ui_StatisticsWidget, QWidget):
             sys.exit(1)
 
     def _data_plot(self):
-        # todo 数据展示功能实现
 
         if self.conn is None:
             self.logger.error('数据库连接丢失')
@@ -118,15 +120,34 @@ class StatisticsWidget(Ui_StatisticsWidget, QWidget):
             bar_set_relaxing = QBarSet('RELAXING')
             bar_set_working = QBarSet('WORKING')
 
+            working_len = 0
+            relaxing_len = 0
+            flag = 0
+            catogories = []
             while query.next():
-                state = query.value('IS_RELAXING')
-                if state == 'RELAXING':
+                current_state = query.value('IS_RELAXING')
+                current_date = query.value('START_DATE')
+                if current_date not in catogories:
+                    catogories.append(current_date)
+                    flag = 1
+
+                if flag == 1:
+                    if relaxing_len > working_len:
+                        bar_set_working.append(0)
+                        working_len += 1
+                    elif relaxing_len < working_len:
+                        bar_set_relaxing.append(0)
+                        relaxing_len += 1
+                    flag = 0
+
+                if current_state == 'RELAXING':
                     value = query.value('TOTAL_DURATION')/3600
                     bar_set_relaxing.append(value)
+                    relaxing_len = relaxing_len + 1
                 else:
                     value = query.value('TOTAL_DURATION')/3600
                     bar_set_working.append(value)
-
+                    working_len = working_len + 1
 
             series = QBarSeries()
             series.append(bar_set_working)
@@ -138,12 +159,6 @@ class StatisticsWidget(Ui_StatisticsWidget, QWidget):
             chart.setAnimationOptions(QChart.SeriesAnimations)
 
             axisX = QBarCategoryAxis()
-            catogories = []
-            query.first()
-            while query.next():
-                start_date = query.value('START_DATE')
-                if start_date not in catogories:
-                    catogories.append(start_date)
             axisX.append(catogories)
             axisX.setTitleText('Date')
             chart.addAxis(axisX, Qt.AlignBottom)
@@ -179,7 +194,7 @@ class StatisticsWidget(Ui_StatisticsWidget, QWidget):
             value_week_working = 0
 
             week_start_date = QDate.fromString(date_begin, 'yyyy-MM-dd')
-            week_end_date = week_start_date.addDays(7)  # 临时记录7天的结束
+            week_end_date = week_start_date.addDays(6)  # 临时记录7天的结束
             date_format = self.dateEdit_begin.displayFormat()
 
             while week_start_date.toString(date_format) <= date_end:
@@ -200,7 +215,7 @@ class StatisticsWidget(Ui_StatisticsWidget, QWidget):
                 value_week_working = 0
                 value_week_relaxing = 0
                 week_start_date = week_start_date.addDays(7)
-                week_end_date = week_end_date.addDays(7)
+                week_end_date = week_start_date.addDays(6)
 
             series = QBarSeries()
             series.append(bar_set_working)
@@ -215,14 +230,17 @@ class StatisticsWidget(Ui_StatisticsWidget, QWidget):
             query.first()
 
             week_start_date = QDate.fromString(date_begin, 'yyyy-MM-dd')
-            week_end_date = week_start_date.addDays(7)  # 临时记录7天的结束
+            week_end_date = week_start_date.addDays(6)  # 临时记录7天的结束
             while week_start_date.toString(date_format) <= date_end:
-                week_str = week_start_date.toString(date_format) + '--->' + week_end_date.toString(date_format)
+                if week_end_date.toString(date_format) >= date_end:
+                    week_str = week_start_date.toString(date_format) + '--->' + date_end
+                else:
+                    week_str = week_start_date.toString(date_format) + '--->' + week_end_date.toString(date_format)
                 if week_start_date.toString(date_format) == week_end_date.toString(date_format):
                     week_str = week_start_date.toString()
                 catogories.append(week_str)
                 week_start_date = week_start_date.addDays(7)
-                week_end_date = week_end_date.addDays(7)
+                week_end_date = week_start_date.addDays(6)
 
 
             axisX.append(catogories)
@@ -262,11 +280,31 @@ class StatisticsWidget(Ui_StatisticsWidget, QWidget):
                 self.logger.error('数据抓取失败')
                 sys.exit(1)
 
+            catogories = []
+            relaxing_len = 0
+            working_len = 0
+            flag = 0
             while query.next():
+                start_month = query.value('START_MONTH')
+                if start_month not in catogories:
+                    catogories.append(start_month)
+                    flag = 1
+
+                if flag == 1:
+                    if relaxing_len > working_len:
+                        bar_set_working.append(0)
+                        working_len += 1
+                    elif relaxing_len < working_len:
+                        bar_set_relaxing.append(0)
+                        relaxing_len += 1
+                    flag = 0
+
                 if query.value('IS_RELAXING') == 'RELAXING':
                     bar_set_relaxing.append(query.value('TOTAL_DURATION')/3600)
+                    relaxing_len += 1
                 else:
                     bar_set_working.append(query.value('TOTAL_DURATION')/3600)
+                    working_len += 1
 
             series = QBarSeries()
             series.append(bar_set_working)

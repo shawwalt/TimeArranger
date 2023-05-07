@@ -1,18 +1,19 @@
-import sys
-import os
-
-from PyQt5.QtWidgets import QApplication
+import ctypes
+from PyQt5.QtWidgets import QApplication, QMessageBox
 from FrontEnd.InitTAWidget import InitTAWidget
 from FrontEnd.global_var import *
 
-
 if __name__ == '__main__':
     # 系统初始化代码
+    # 获取管理员权限便于修改Hosts文件
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 1)
+        sys.exit(0)
+
     if not os.path.exists(SOFTWARE_PATH):
         try:
             os.makedirs(SOFTWARE_PATH)
         except Exception:
-            # todo 写一个消息框提醒创建文件夹出错
             sys.exit(1)
 
     app = QApplication(sys.argv)

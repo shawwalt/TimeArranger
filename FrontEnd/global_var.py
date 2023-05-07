@@ -11,6 +11,9 @@ UNKNOWN = 'UNKNOWN'
 YES = 'YES'
 NO = 'NO'
 
+DRIVER_DATA_PATH = os.environ['DriverData']
+HOSTS_PATH = os.path.abspath(os.path.join(DRIVER_DATA_PATH, '..')) + '\\etc/hosts'
+
 SOFTWARE_PATH = os.environ['AppData'] + '\\TimeArranger'
 DB_NAME = 'time_arranger.sqlite'
 

@@ -20,7 +20,9 @@ class ClockWidget(Ui_ClockWidget, QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        self.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(
+            Qt.CustomizeWindowHint | Qt.WindowStaysOnTopHint | Qt.SplashScreen | Qt.FramelessWindowHint
+        )
         self.move(
             self.setting_manager.value('MainWindow/clk_pos', self._get_central_pos())
         )

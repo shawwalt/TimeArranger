@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="icon">
+    <file alias="web.png">UI/Pic/web.png</file>
     <file alias="icon.png">UI/Pic/icon.png</file>
     <file alias="relaxing.png">UI/Pic/relaxing.png</file>
     <file alias="statistics.png">UI/Pic/statistics.png</file>

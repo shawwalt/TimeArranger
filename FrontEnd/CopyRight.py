@@ -1,8 +1,9 @@
+from PyQt5.QtGui import QIcon
+
 from UI.UI_CopyRight import Ui_CopyRight
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtWidgets import QDesktopWidget
-from PyQt5.QtCore import QPoint
-from PyQt5 import Qt
+from PyQt5.QtCore import QPoint, Qt
 
 
 class CopyRight(Ui_CopyRight, QWidget):
@@ -12,7 +13,10 @@ class CopyRight(Ui_CopyRight, QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        self.setWindowFlags(Qt.Qt.CustomizeWindowHint)
+        self.setWindowIcon(QIcon(':/icon/icon.png'))
+        self.setWindowFlags(
+            Qt.CustomizeWindowHint | Qt.FramelessWindowHint
+        )
         self.move(self._get_central_pos())
 
     def _get_central_pos(self) -> QPoint:
